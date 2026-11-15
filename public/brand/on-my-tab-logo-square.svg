@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>On My Tab</title>
+  <rect width="1024" height="1024" fill="#15110e"/>
+  <path d="M300 168 H724 V840 L697.5 814 L671.0 840 L644.5 814 L618.0 840 L591.5 814 L565.0 840 L538.5 814 L512.0 840 L485.5 814 L459.0 840 L432.5 814 L406.0 840 L379.5 814 L353.0 840 L326.5 814 L300.0 840 Z" fill="#f2ebdd"/>
+  <g fill="#2a2420">
+    <rect x="356" y="236" width="150" height="22" rx="4"/>
+    <rect x="356" y="300" width="230" height="16" rx="4" opacity=".55"/>
+    <rect x="610" y="300" width="58" height="16" rx="4" opacity=".55"/>
+    <rect x="356" y="350" width="190" height="16" rx="4" opacity=".55"/>
+    <rect x="610" y="350" width="58" height="16" rx="4" opacity=".55"/>
+    <rect x="356" y="400" width="210" height="16" rx="4" opacity=".55"/>
+    <rect x="610" y="400" width="58" height="16" rx="4" opacity=".55"/>
+  </g>
+  <g>
+    <line x1="332" y1="470" x2="692" y2="470" stroke="#e0452b" stroke-width="10" stroke-dasharray="22 14" stroke-linecap="round"/>
+    <path d="M300 452 L332 470 L300 488 Z" fill="#e0452b"/>
+    <path d="M724 452 L692 470 L724 488 Z" fill="#e0452b"/>
+  </g>
+  <g transform="rotate(-12 560 640)">
+    <circle cx="560" cy="640" r="148" fill="#e0452b"/>
+    <circle cx="560" cy="640" r="122" fill="none" stroke="#f2ebdd" stroke-width="8" stroke-dasharray="4 14" stroke-linecap="round" opacity=".9"/>
+    <path d="M498 642 L542 686 L626 596" fill="none" stroke="#f2ebdd" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
