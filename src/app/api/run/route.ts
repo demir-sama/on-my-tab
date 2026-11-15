@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import recorded from "@/data/serv-recorded.json";
 import { BRIEFS, candidatesForWant } from "@/lib/catalog";
 import { enforce, fallbackPlan, type Plan } from "@/lib/engine";
-import { settleScale, KITE_TESTNET } from "@/lib/kite";
+import { ARC_TESTNET, settleScale } from "@/lib/kite";
+import { clientIp, limitsFromEnv, visitorId } from "@/lib/limits";
 import { preflight } from "@/lib/quotes";
-import { receiptsFor } from "@/lib/receipts";
+import { issueRunToken } from "@/lib/run-token";
 import { servConfigured, servPlan, type ServMeta } from "@/lib/serv";
+import { liveSettleEnabled } from "@/lib/settle";
+import { getStore } from "@/lib/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,23 +24,7 @@ const Body = z.object({
 type Recorded = Record<string, { plan: Plan; meta: ServMeta; recordedAt: string }>;
 const RECORDED = recorded as Recorded;
 
-// Frugal live-SERV guard: our credit balance is tiny, so cap live calls per instance and per IP.
-const LIVE_LIMIT = Number(process.env.SERV_LIVE_LIMIT ?? 25);
-let liveCalls = 0;
-const perIp = new Map<string, { n: number; reset: number }>();
-const cache = new Map<string, { plan: Plan; meta: ServMeta; at: string }>();
-
-function ipAllowed(ip: string): boolean {
-  const now = Date.now();
-  const e = perIp.get(ip);
-  if (!e || e.reset < now) {
-    perIp.set(ip, { n: 1, reset: now + 3_600_000 });
-    return true;
-  }
-  if (e.n >= 4) return false;
-  e.n++;
-  return true;
-}
+export type PlanSource = "serv-live" | "serv-cached" | "serv-recorded" | "fallback";
 
 export async function POST(req: Request) {
   let body: z.infer<typeof Body>;
@@ -46,61 +34,82 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Give me a want (3–240 chars) and a cap between $1 and $500." }, { status: 400 });
   }
   const { want, cap } = body;
+  const visitor = visitorId(clientIp(req.headers));
+  const limits = limitsFromEnv();
+  const store = getStore();
 
   const { candidates, qty } = candidatesForWant(want);
   const quotes = await preflight(candidates, qty);
   const preset = BRIEFS.find((b) => b.want === want);
 
-  let plan: Plan;
-  let planSource: "serv-live" | "serv-recorded" | "serv-cached" | "fallback";
-  let meta: (ServMeta & { recordedAt?: string }) | null = null;
-  let servError: string | null = null;
+  let plan: Plan | null = null;
+  let planSource: PlanSource = "fallback";
+  let meta: (ServMeta & { recordedAt?: string; cachedAt?: string }) | null = null;
+  let servNote: string | null = null;
 
-  const key = JSON.stringify([want.toLowerCase(), quotes.map((q) => [q.sku, q.total])]);
-  if (preset && RECORDED[preset.id]) {
-    const r = RECORDED[preset.id]!;
-    plan = r.plan;
-    meta = { ...r.meta, recordedAt: r.recordedAt };
-    planSource = "serv-recorded";
-  } else if (cache.has(key)) {
-    const c = cache.get(key)!;
-    plan = c.plan;
-    meta = { ...c.meta, recordedAt: c.at };
+  // Cache by brief + the live quotes (the cap is enforced by code, not by the plan).
+  const key = createHash("sha256")
+    .update(JSON.stringify([want.toLowerCase().replace(/\s+/g, " "), quotes.map((q) => [q.sku, q.total])]))
+    .digest("hex");
+
+  const cached = await store.getPlan(key, limits.servCacheTtlSec).catch(() => null);
+  if (cached) {
+    plan = cached.plan;
+    meta = { ...cached.meta, cachedAt: cached.at };
     planSource = "serv-cached";
+  } else if (servConfigured() && (await store.takeServCall(visitor, limits).catch(() => false))) {
+    try {
+      const out = await servPlan(want, cap, quotes);
+      plan = out.plan;
+      meta = out.meta;
+      planSource = "serv-live";
+      await store.putPlan(key, { plan, meta }).catch(() => undefined);
+    } catch (e) {
+      servNote = `SERV call failed (${e instanceof Error ? e.message.replace(/Bearer\s+\S+/g, "Bearer ***").slice(0, 80) : "error"}).`;
+    }
   } else {
-    const ip = (req.headers.get("x-forwarded-for") ?? "local").split(",")[0]!.trim();
-    const canCall = servConfigured() && liveCalls < LIVE_LIMIT && ipAllowed(ip);
-    if (canCall) {
-      try {
-        liveCalls++;
-        const out = await servPlan(want, cap, quotes);
-        plan = out.plan;
-        meta = out.meta;
-        planSource = "serv-live";
-        cache.set(key, { plan, meta, at: new Date().toISOString() });
-      } catch (e) {
-        servError = e instanceof Error ? e.message.replace(/Bearer\s+\S+/g, "Bearer ***") : "SERV failed";
-        plan = fallbackPlan(want, quotes, cap);
-        planSource = "fallback";
-      }
+    servNote = servConfigured() ? "Live SERV budget for this demo is used up for now." : "SERV key not configured.";
+  }
+
+  if (!plan) {
+    if (preset && RECORDED[preset.id]) {
+      const r = RECORDED[preset.id]!;
+      plan = r.plan;
+      meta = { ...r.meta, recordedAt: r.recordedAt };
+      planSource = "serv-recorded";
+      servNote = `${servNote ?? ""} Showing a recorded real SERV response for this brief.`.trim();
     } else {
-      servError = servConfigured() ? "Live SERV budget for this demo is used up — showing the rule-based plan." : "SERV key not configured.";
       plan = fallbackPlan(want, quotes, cap);
       planSource = "fallback";
+      servNote = `${servNote ?? ""} Showing the rule-based plan.`.trim();
     }
   }
 
   const result = enforce(plan, quotes, cap);
+  let token: string | null = null;
+  let runId: string | null = null;
+  try {
+    ({ token, runId } = issueRunToken(result, visitor));
+  } catch {
+    /* no token secret: live settlement unavailable, UI falls back honestly */
+  }
+
   return NextResponse.json({
+    runId,
+    token,
     want,
     cap,
     quotes,
     plan,
     planSource,
     meta,
-    servError,
+    servError: servNote,
     result,
-    receipts: receiptsFor(result),
-    network: { ...KITE_TESTNET, settleScale: settleScale(), payTo: process.env.PAY_TO ?? null },
+    settle: {
+      live: Boolean(token) && liveSettleEnabled(),
+      rail: ARC_TESTNET.label,
+      symbol: ARC_TESTNET.symbol,
+      scale: settleScale(),
+    },
   });
 }

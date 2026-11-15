@@ -1,5 +1,5 @@
 {
- "note": "Real Arc testnet (eip155:5042002) USDC settlements recorded by scripts/pay.mjs --via arc-key. Paid by a throwaway DEMO BUYER wallet, not Kite Passport (dev Passport refused our host: host_not_in_executable_catalog). Gas paid by the app's testnet relayer.",
+ "note": "Recorded real Arc testnet (eip155:5042002) USDC settlements from the Nov 15 2026 gift run (scripts/pay.mjs --via arc-key), at the 1:100 demo scale used then. Shown only as a labelled fallback when live settlement is capped or unavailable. Paid by the app's throwaway demo buyer wallet, not Kite Passport.",
  "bySku": {
   "pothos-ceramic": {
    "tx": "0x68813f6798566771f8d7c4d38a9d24e1306ede1c7bc06ac2dc5ba8dd107c4c00",
@@ -46,5 +46,6 @@
    "totalUsd": 9.5,
    "at": "2026-11-15T02:25:37.577Z"
   }
- }
+ },
+ "settleScale": 0.01
 }
