@@ -1,0 +1,50 @@
+{
+ "note": "Real Arc testnet (eip155:5042002) USDC settlements recorded by scripts/pay.mjs --via arc-key. Paid by a throwaway DEMO BUYER wallet, not Kite Passport (dev Passport refused our host: host_not_in_executable_catalog). Gas paid by the app's testnet relayer.",
+ "bySku": {
+  "pothos-ceramic": {
+   "tx": "0x68813f6798566771f8d7c4d38a9d24e1306ede1c7bc06ac2dc5ba8dd107c4c00",
+   "payer": "0x3c7E274645fcCB7A8bdfD54B233f40f10c923A48",
+   "network": "eip155:5042002",
+   "via": "demo-buyer-wallet-arc",
+   "order": "omt_86b90686",
+   "totalUsd": 16,
+   "at": "2026-11-15T02:25:26.332Z"
+  },
+  "linen-journal": {
+   "tx": "0x2242fdbad1a9e9f70e517027fca0699a1e6619c35ec75a1eac74ecfe5c80ecca",
+   "payer": "0x3c7E274645fcCB7A8bdfD54B233f40f10c923A48",
+   "network": "eip155:5042002",
+   "via": "demo-buyer-wallet-arc",
+   "order": "omt_58ec4f51",
+   "totalUsd": 12,
+   "at": "2026-11-15T02:25:27.825Z"
+  },
+  "card-wrap": {
+   "tx": "0xacee0d0a64994a8193be1a90949b6e947ae28b4e00bf63cde46e956fb056edb9",
+   "payer": "0x3c7E274645fcCB7A8bdfD54B233f40f10c923A48",
+   "network": "eip155:5042002",
+   "via": "demo-buyer-wallet-arc",
+   "order": "omt_12d0bd8c",
+   "totalUsd": 4,
+   "at": "2026-11-15T02:25:29.319Z"
+  },
+  "pressed-bookmark": {
+   "tx": "0x2c9a126d89ae673dac642176dadd0666a4f2a9ce6cdbd7fbd446a1a649d4cc04",
+   "payer": "0x3c7E274645fcCB7A8bdfD54B233f40f10c923A48",
+   "network": "eip155:5042002",
+   "via": "demo-buyer-wallet-arc",
+   "order": "omt_91d2b32f",
+   "totalUsd": 5,
+   "at": "2026-11-15T02:25:30.399Z"
+  },
+  "same-day-courier": {
+   "tx": "0xa240c7e2dd830567d7e4c26b6dc0b2c4118ea949b4db68113b9032fe8ad71a7d",
+   "payer": "0x3c7E274645fcCB7A8bdfD54B233f40f10c923A48",
+   "network": "eip155:5042002",
+   "via": "demo-buyer-wallet-arc",
+   "order": "omt_f1cec12e",
+   "totalUsd": 9.5,
+   "at": "2026-11-15T02:25:37.577Z"
+  }
+ }
+}

@@ -1,0 +1,95 @@
+{
+ "gift": {
+  "plan": {
+   "summary": "Chosen gift bundle covers plant, journal, wrap, and same-day delivery; skipped the overpriced duplicate journal.",
+   "note": "Happy birthday to Ama\u2014this mix should feel thoughtful, useful, and delivered on time.",
+   "steps": [
+    {
+     "sku": "pothos-ceramic",
+     "decision": "buy",
+     "reason": "At $16, it meets the plant gift need and sits $1 below the $17 going rate."
+    },
+    {
+     "sku": "linen-journal",
+     "decision": "buy",
+     "reason": "At $12, it matches the journal need and is $0.50 below the $12.50 going rate."
+    },
+    {
+     "sku": "linen-journal-gilded",
+     "decision": "skip",
+     "reason": "At $34, it is $21.50 above the $12.50 going rate for the same journal."
+    },
+    {
+     "sku": "card-wrap",
+     "decision": "buy",
+     "reason": "At $4, it covers wrapping and the card at $0.50 below the $4.50 going rate."
+    },
+    {
+     "sku": "pressed-bookmark",
+     "decision": "buy",
+     "reason": "At $5, it adds a small journal-themed extra at the going rate."
+    },
+    {
+     "sku": "same-day-courier",
+     "decision": "buy",
+     "reason": "At $9.50, it meets the today-delivery request and is only $0.50 above the $9 going rate."
+    }
+   ]
+  },
+  "meta": {
+   "model": "gpt-5.4-mini-2026-03-17",
+   "latencyMs": 5636,
+   "usage": {
+    "prompt_tokens": 1119,
+    "completion_tokens": 793,
+    "total_tokens": 1912
+   },
+   "id": "chatcmpl-EkJjPrAWKKGhLFatgzRJRgqi4XPSH"
+  },
+  "recordedAt": "2026-11-15T01:54:13.105809+00:00"
+ },
+ "night": {
+  "plan": {
+   "summary": "Buy the official tickets, food, ride, and balcony upgrade.",
+   "note": "I\u2019ve lined up the best fit for your night out.",
+   "steps": [
+    {
+     "sku": "show-ticket-resale",
+     "decision": "skip",
+     "reason": "Two tickets cost $76, which is $48 above the $28 face value from the box office."
+    },
+    {
+     "sku": "show-ticket-official",
+     "decision": "buy",
+     "reason": "Two official tickets cost $28, matching the $14 usual rate each."
+    },
+    {
+     "sku": "suya-platter",
+     "decision": "buy",
+     "reason": "The suya platter costs $18, which is $1 below the $19 usual rate."
+    },
+    {
+     "sku": "ride-home",
+     "decision": "buy",
+     "reason": "The ride home costs $11, exactly matching the usual rate."
+    },
+    {
+     "sku": "vip-lounge",
+     "decision": "buy",
+     "reason": "The balcony upgrade costs $12, matching the usual rate and adds seating plus drinks."
+    }
+   ]
+  },
+  "meta": {
+   "model": "gpt-5.4-mini-2026-03-17",
+   "latencyMs": 2807,
+   "usage": {
+    "prompt_tokens": 1042,
+    "completion_tokens": 316,
+    "total_tokens": 1358
+   },
+   "id": "chatcmpl-EkJjlDpxEZ2XBssdxjKt397SNC6j2"
+  },
+  "recordedAt": "2026-11-15T01:54:27.357594+00:00"
+ }
+}
