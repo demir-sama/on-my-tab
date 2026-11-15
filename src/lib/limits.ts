@@ -43,9 +43,19 @@ export function clientIp(headers: Headers): string {
   return raw.split(",")[0]!.trim() || "local";
 }
 
+/** IPv6 clients rotate addresses inside their /64, so rate-limit the /64; IPv4 stays as is. */
+export function ipBucket(ip: string): string {
+  if (!ip.includes(":")) return ip;
+  const [head = "", tail = ""] = ip.toLowerCase().split("::");
+  const h = head ? head.split(":") : [];
+  const t = tail ? tail.split(":") : [];
+  const full = ip.includes("::") ? [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill("0"), ...t] : h;
+  return `${full.slice(0, 4).map((x) => x.replace(/^0+(?=.)/, "")).join(":")}::/64`;
+}
+
 /** Salted, truncated hash so we never store raw IPs. */
 export function visitorId(ip: string, salt = process.env.VISITOR_SALT ?? "omt-dev-salt"): string {
-  return createHash("sha256").update(`${salt}:${ip}`).digest("hex").slice(0, 24);
+  return createHash("sha256").update(`${salt}:${ipBucket(ip)}`).digest("hex").slice(0, 24);
 }
 
 export type DenyReason = "daily_cap" | "daily_lines" | "visitor_runs" | "visitor_lines" | "duplicate" | "disabled";

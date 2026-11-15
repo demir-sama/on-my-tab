@@ -1,6 +1,6 @@
 import { BRIEFS, PRODUCTS, SHOPS } from "@/lib/catalog";
 import { KITE_TESTNET, ARC_TESTNET, settleScale } from "@/lib/kite";
-import { liveReceiptCount } from "@/lib/receipts";
+import { buyerAddress, liveSettleEnabled } from "@/lib/settle";
 import TabApp from "@/components/TabApp";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +15,8 @@ export default function Page() {
       rails={[KITE_TESTNET, ...(arcOn ? [ARC_TESTNET] : [])].map((r) => ({ label: r.label, network: r.network, symbol: r.symbol }))}
       payTo={process.env.PAY_TO ?? null}
       settleScale={settleScale()}
-      liveReceipts={liveReceiptCount()}
+      settleLive={liveSettleEnabled()}
+      buyer={liveSettleEnabled() ? buyerAddress() : null}
     />
   );
 }

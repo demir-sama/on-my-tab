@@ -7,18 +7,20 @@ import { money, resolveHold, type Line, type Plan, type Quote, type TabResult } 
 
 interface BriefLite { id: string; label: string; want: string; cap: number }
 interface RailLite { label: string; network: string; symbol: string }
-interface Receipt { sku: string; mode: "testnet" | "seeded"; ref: string; url?: string; at?: string; network?: string; via?: string; payerLabel?: string }
+interface Receipt { sku: string; mode: "live" | "recorded" | "none"; displayUsd: number; onchain?: string; symbol?: string; network?: string; ref?: string; url?: string; at?: string; note?: string }
+type ReceiptState = Receipt | "pending";
 interface RunResponse {
+  runId: string | null;
+  token: string | null;
   want: string;
   cap: number;
   quotes: Quote[];
   plan: Plan;
   planSource: "serv-live" | "serv-recorded" | "serv-cached" | "fallback";
-  meta: { model: string; latencyMs: number; usage?: { total_tokens?: number }; recordedAt?: string } | null;
+  meta: { model: string; latencyMs: number; usage?: { total_tokens?: number }; recordedAt?: string; cachedAt?: string } | null;
   servError: string | null;
   result: TabResult;
-  receipts: Receipt[];
-  network: { network: string; symbol: string; settleScale: number; payTo: string | null };
+  settle: { live: boolean; rail: string; symbol: string; scale: number };
 }
 
 type Phase = "idle" | "quoting" | "reasoning" | "printing" | "holding" | "done" | "error";
@@ -33,7 +35,8 @@ export default function TabApp(props: {
   rails: RailLite[];
   payTo: string | null;
   settleScale: number;
-  liveReceipts: number;
+  settleLive: boolean;
+  buyer: string | null;
 }) {
   const [briefId, setBriefId] = useState<string>(props.briefs[0]!.id);
   const [want, setWant] = useState(props.briefs[0]!.want);
@@ -44,6 +47,10 @@ export default function TabApp(props: {
   const [shown, setShown] = useState(0);
   const [quotesShown, setQuotesShown] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [settled, setSettled] = useState<Map<string, Receipt>>(new Map());
+  const [queued, setQueued] = useState<string[]>([]);
+  const settleQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const sentRef = useRef<Set<string>>(new Set());
   const receiptRef = useRef<HTMLDivElement>(null);
   const deskRef = useRef<HTMLDivElement>(null);
   const busy = phase !== "idle" && phase !== "done" && phase !== "error";
@@ -67,8 +74,12 @@ export default function TabApp(props: {
     setView(null);
     setShown(0);
     setQuotesShown(0);
+    setSettled(new Map());
+    setQueued([]);
+    sentRef.current = new Set();
     setPhase("quoting");
-    if (window.matchMedia("(max-width: 900px)").matches) deskRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (isDesktop()) window.scrollTo({ top: 0, behavior: "smooth" });
+    else deskRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     try {
       const started = Date.now();
       const res = await fetch("/api/run", {
@@ -112,8 +123,57 @@ export default function TabApp(props: {
   }, [phase, view, shown]);
 
   useEffect(() => {
-    if (shown > 0) receiptRef.current?.querySelector(".r-line:last-of-type")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [shown]);
+    if (shown === 0) return;
+    const el = phase === "done" ? receiptRef.current?.querySelector(".r-foot") : receiptRef.current?.querySelector(".r-line:last-of-type");
+    if (el) followInDesk(deskRef.current, el, phase === "done");
+  }, [shown, phase]);
+
+  // When the tab asks, bring the question (and its Raise / Skip) into view once it has opened.
+  const holdSku = phase === "holding" && view ? view.lines[shown - 1]?.sku : undefined;
+  useEffect(() => {
+    if (!holdSku) return;
+    const t = setTimeout(() => {
+      const el = receiptRef.current?.querySelector(".hold-ask");
+      if (el) followInDesk(deskRef.current, el);
+    }, 700);
+    return () => clearTimeout(t);
+  }, [holdSku]);
+
+  // Settle every PAID line for real, one at a time, as it prints. A raised HOLD settles after you raise it.
+  useEffect(() => {
+    if (!run || !view) return;
+    for (const l of view.lines.slice(0, shown)) {
+      const key = `${run.runId}:${l.sku}`;
+      if (l.verdict !== "PAID" || sentRef.current.has(key)) continue;
+      sentRef.current.add(key);
+      const raised = run.result.lines.find((x) => x.sku === l.sku)?.verdict === "HOLD";
+      const token = run.token;
+      const runId = run.runId;
+      queueMicrotask(() => setQueued((q) => [...q, l.sku]));
+      settleQueue.current = settleQueue.current.then(async () => {
+        let receipt: Receipt;
+        if (!token) {
+          receipt = { sku: l.sku, mode: "none", displayUsd: l.total, note: "Live settlement isn't configured on this deployment." };
+        } else {
+          try {
+            const res = await fetch("/api/settle", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token, sku: l.sku, raised }) });
+            const data = (await res.json()) as { receipt?: Receipt; error?: string };
+            receipt = data.receipt ?? { sku: l.sku, mode: "none", displayUsd: l.total, note: SETTLE_ERRORS[data.error ?? ""] ?? "Couldn't settle this line." };
+          } catch {
+            receipt = { sku: l.sku, mode: "none", displayUsd: l.total, note: "Network error while settling." };
+          }
+        }
+        // Ignore answers for a tab the user has already replaced.
+        if (sentRef.current.has(`${runId}:${l.sku}`)) setSettled((m) => new Map(m).set(l.sku, receipt));
+      });
+    }
+  }, [run, view, shown]);
+
+  const receipts = useMemo(() => {
+    const m = new Map<string, ReceiptState>();
+    for (const sku of queued) m.set(sku, settled.get(sku) ?? "pending");
+    return m;
+  }, [queued, settled]);
 
   const answerHold = (sku: string, action: "raise" | "skip") => {
     if (!view) return;
@@ -125,7 +185,6 @@ export default function TabApp(props: {
   const visible = useMemo(() => (view ? view.lines.slice(0, shown) : []), [view, shown]);
   const spent = visible.filter((l) => l.verdict === "PAID").reduce((s, l) => s + l.total, 0);
   const tabCap = view?.cap ?? cap;
-  const receipts = useMemo(() => new Map((run?.receipts ?? []).map((r) => [r.sku, r])), [run]);
   const holdLine = phase === "holding" ? visible[visible.length - 1] : undefined;
   const counts = useMemo(() => {
     const c = { PAID: 0, HOLD: 0, REFUSED: 0, SKIPPED: 0 };
@@ -139,7 +198,16 @@ export default function TabApp(props: {
     setView(null);
     setShown(0);
     setQuotesShown(0);
+    setSettled(new Map());
+    setQueued([]);
+    sentRef.current = new Set();
   };
+
+  const settledList = [...receipts.values()].filter((r): r is Receipt => r !== "pending");
+  const liveCount = settledList.filter((r) => r.mode === "live").length;
+  const liveOnchain = settledList.filter((r) => r.mode === "live").reduce((s, r) => s + Number(r.onchain ?? 0), 0);
+  const recordedCount = settledList.filter((r) => r.mode === "recorded").length;
+  const pendingCount = [...receipts.values()].filter((r) => r === "pending").length;
 
   return (
     <main className="shell">
@@ -151,7 +219,7 @@ export default function TabApp(props: {
         </Link>
         <nav className="chips" aria-label="What powers it">
           <span className="chip">SERV Reasoning</span>
-          <span className="chip">x402 · {props.rails.map((r) => r.symbol).join(" / ")}</span>
+          <span className="chip">{props.settleLive ? "x402 · USDC · Arc testnet" : `x402 · ${props.rails.map((r) => `${r.symbol} on ${r.label}`).join(" / ")}`}</span>
           <span className="chip chip--warn">Testnet · demo sellers</span>
         </nav>
       </header>
@@ -225,7 +293,7 @@ export default function TabApp(props: {
             <span>{phase === "done" || phase === "error" ? "Open a new tab" : busy ? "Tab sealed — shopping…" : `Seal a ${money(cap)} tab`}</span>
           </motion.button>
           <p className="fineprint">
-            Shops here are our own demo sellers on testnet. No real goods ship and no real money moves.
+            Shops here are our own demo sellers. Every paid line settles for real on Arc testnet in test USDC — no real goods ship and no real money moves.
           </p>
         </div>
 
@@ -236,10 +304,10 @@ export default function TabApp(props: {
 
           <AnimatePresence mode="popLayout">
             {phase === "idle" && (
-              <motion.div key="empty" className="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, y: -8 }}>
-                <ReceiptGhost />
-                <p>
-                  Your receipt prints here. {props.shopCount} demo shops, {props.productCount} items, one sealed tab.
+              <motion.div key="empty" className="sample" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, y: -8 }}>
+                <SampleReceipt />
+                <p className="sample-cap">
+                  A sample receipt. Yours prints here, line by line — {props.shopCount} demo shops, {props.productCount} items, one sealed tab.
                 </p>
               </motion.div>
             )}
@@ -263,7 +331,7 @@ export default function TabApp(props: {
               <div className="r-rule" />
               <AnimatePresence initial={false}>
                 {visible.map((l) => (
-                  <ReceiptLine key={l.sku} line={l} receipt={receipts.get(l.sku)} onHold={answerHold} holding={holdLine?.sku === l.sku} preview={view} />
+                  <ReceiptLine key={l.sku} line={l} receipt={receipts.get(l.sku)} onHold={answerHold} holding={holdLine?.sku === l.sku} preview={view} rail={run!.settle.rail} />
                 ))}
               </AnimatePresence>
               {phase === "done" && (
@@ -275,9 +343,14 @@ export default function TabApp(props: {
                   <Row k="REFUSED" v={`${counts.REFUSED}`} />
                   {run!.plan.note && <p className="r-note">{run!.plan.note}</p>}
                   <div className="r-rule" />
+                  <Row k="ON-CHAIN" v={pendingCount ? "settling…" : liveCount || !recordedCount ? `${liveCount} live · ${trimNum(liveOnchain)} ${run!.settle.symbol}` : `0 live · ${recordedCount} recorded`} />
                   <p className="r-small">
-                    Prices read from each seller&apos;s HTTP 402 challenge (x402 v2, exact; {props.rails.map((r) => `${r.symbol} on ${r.label}`).join(" or ")}). Testnet settles at{" "}
-                    {run!.network.settleScale === 1 ? "full value" : `1:${Math.round(1 / run!.network.settleScale)} scale`}.
+                    Prices come from each seller&apos;s HTTP 402 challenge (x402 v2, exact). Paid lines settle in test {run!.settle.symbol} on {run!.settle.rail} at{" "}
+                    {run!.settle.scale === 1 ? "face value" : `1:${Math.round(1 / run!.settle.scale)} of the tab (a $10.00 line moves ${trimNum(10 * run!.settle.scale)} ${run!.settle.symbol})`}.
+                  </p>
+                  <p className="r-small">
+                    Paid by the app&apos;s demo buyer wallet{props.buyer ? ` (${short(props.buyer)})` : ""} on {run!.settle.rail}, not Kite Passport: Kite&apos;s dev Passport only pays hosts
+                    in its own catalog. Live settlement is capped per day and per visitor; past the cap, lines show a labelled recorded settlement instead.
                   </p>
                   <Barcode seed={run!.want + view.spent} />
                 </motion.div>
@@ -289,7 +362,27 @@ export default function TabApp(props: {
         </div>
       </section>
 
-      <HowItWorks rails={props.rails} payTo={props.payTo} liveReceipts={props.liveReceipts} />
+      <HowItWorks rails={props.rails} payTo={props.payTo} buyer={props.buyer} settleLive={props.settleLive} />
+
+      <Revenue />
+
+      <AnimatePresence>
+        {holdLine && (
+          <motion.div className="hold-sheet" role="dialog" aria-label="Over the tab" initial={{ y: "110%" }} animate={{ y: 0 }} exit={{ y: "110%" }} transition={{ type: "spring", stiffness: 260, damping: 28 }}>
+            <p>
+              <b>{holdLine.title}</b> would put your tab <strong>{money(holdLine.overBy ?? 0)}</strong> over.
+            </p>
+            <div className="hold-btns">
+              <button className="btn-raise" onClick={() => answerHold(holdLine.sku, "raise")}>
+                Raise tab +{money(raiseByFor(view!, holdLine))}
+              </button>
+              <button className="btn-skip" onClick={() => answerHold(holdLine.sku, "skip")}>
+                Skip it
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <footer className="foot">
         <span>On My Tab · built for SERV Hackathon 02, Kite track</span>
@@ -301,6 +394,28 @@ export default function TabApp(props: {
   );
 }
 
+const isDesktop = () => typeof window !== "undefined" && window.matchMedia("(min-width: 901px)").matches;
+
+/** Keep the newest receipt line in view: scroll the sticky desk itself on desktop, the page on mobile. */
+function followInDesk(desk: HTMLElement | null, el: Element, toTop = false) {
+  if (desk && isDesktop()) {
+    const d = desk.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    if (toTop) return void desk.scrollBy({ top: r.top - d.top - 140, behavior: "smooth" });
+    // The sticky desk can start below the fold before the page scrolls, so measure against what's actually on screen.
+    const bottom = Math.min(d.bottom, window.innerHeight);
+    if (r.bottom > bottom - 12) desk.scrollBy({ top: r.bottom - bottom + 24, behavior: "smooth" });
+    return;
+  }
+  el.scrollIntoView({ block: toTop ? "start" : "nearest", behavior: "smooth" });
+}
+
+function ago(iso?: string) {
+  if (!iso) return "";
+  const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  return m < 1 ? "just now" : m < 60 ? `${m}m ago` : `${Math.round(m / 60)}h ago`;
+}
+
 function sourceLabel(run: RunResponse) {
   switch (run.planSource) {
     case "serv-live":
@@ -308,10 +423,31 @@ function sourceLabel(run: RunResponse) {
     case "serv-recorded":
       return "SERV · recorded";
     case "serv-cached":
-      return "SERV · cached";
+      return `SERV · cached ${ago(run.meta?.cachedAt)}`;
     default:
       return "Rule-based fallback";
   }
+}
+
+const SETTLE_ERRORS: Record<string, string> = {
+  expired: "This tab expired before it settled. Open a new one.",
+  wrong_visitor: "Your connection changed networks mid-run, so this line wasn't settled. Open a new tab.",
+  settlement_unavailable: "Live settlement isn't available right now.",
+};
+
+const trimNum = (n: number) => (Math.round(n * 1e6) / 1e6).toString();
+
+function raiseByFor(view: TabResult, line: Line) {
+  try {
+    return resolveHold(view, line.sku, "raise").cap - view.cap;
+  } catch {
+    return line.overBy ?? 0;
+  }
+}
+
+function fmtWhen(iso?: string) {
+  if (!iso) return "";
+  return new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" });
 }
 
 function Row({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
@@ -330,21 +466,16 @@ function ReceiptLine({
   onHold,
   holding,
   preview,
+  rail,
 }: {
   line: Line;
-  receipt?: Receipt;
+  receipt?: ReceiptState;
   onHold: (sku: string, a: "raise" | "skip") => void;
   holding: boolean;
   preview: TabResult;
+  rail: string;
 }) {
-  const raiseBy = holding ? (() => {
-    try {
-      const next = resolveHold(preview, line.sku, "raise");
-      return next.cap - preview.cap;
-    } catch {
-      return line.overBy ?? 0;
-    }
-  })() : 0;
+  const raiseBy = holding ? raiseByFor(preview, line) : 0;
   return (
     <motion.div
       className={`r-line r-line--${line.verdict.toLowerCase()}`}
@@ -372,20 +503,7 @@ function ReceiptLine({
       )}
       <div className="r-guard">{line.guard}</div>
       <Stamp verdict={line.verdict} markup={line.markup} />
-      {line.verdict === "PAID" && receipt && (
-        <div className="r-receipt">
-          {receipt.mode === "testnet" && receipt.url ? (
-            <a href={receipt.url} target="_blank" rel="noreferrer">
-              {receipt.network ?? "testnet"} tx {short(receipt.ref)} ↗
-            </a>
-          ) : null}
-          {receipt.mode === "testnet" && receipt.url ? (
-            <span className="r-payer"> · paid by {receipt.payerLabel ?? "demo buyer wallet, not Passport"}</span>
-          ) : (
-            <span title="Seeded receipt: no on-chain settlement for this run">{receipt.ref} · seeded</span>
-          )}
-        </div>
-      )}
+      {line.verdict === "PAID" && receipt && <ReceiptProof receipt={receipt} rail={rail} />}
       <AnimatePresence>
         {holding && (
           <motion.div className="hold-ask" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
@@ -525,7 +643,7 @@ function Reasoning({ run }: { run: RunResponse }) {
   );
 }
 
-function HowItWorks({ rails, payTo, liveReceipts }: { rails: RailLite[]; payTo: string | null; liveReceipts: number }) {
+function HowItWorks({ rails, payTo, buyer, settleLive }: { rails: RailLite[]; payTo: string | null; buyer: string | null; settleLive: boolean }) {
   return (
     <section className="how">
       <h2>
@@ -565,11 +683,14 @@ function HowItWorks({ rails, payTo, liveReceipts }: { rails: RailLite[]; payTo: 
             the cap and bad-deal guards.
           </li>
           <li>
-            <b>Real when marked with a tx link:</b> Arc testnet USDC settlements through our self-hosted x402 facilitator.{" "}
-            {liveReceipts > 0 ? `${liveReceipts} item(s) have recorded on-chain receipts.` : "None recorded yet, so receipts show SEEDED."} The gift
-            run&apos;s receipts were paid by a <b>demo buyer wallet</b>, not Kite Passport: Kite&apos;s dev Passport only pays hosts in its curated
-            service catalog and refused ours (<code>host_not_in_executable_catalog</code>). The Passport session flow is built and was approved, but
-            couldn&apos;t execute.
+            <b>Real on every run (when marked LIVE):</b> each paid line settles in test USDC on Arc testnet through our self-hosted x402 facilitator, with a fresh tx you can open.{" "}
+            {settleLive ? "" : "Live settlement is switched off on this deployment right now. "}It&apos;s paid by the app&apos;s <b>demo buyer wallet</b>
+            {buyer ? <> (<code>{short(buyer)}</code>)</> : null}, not Kite Passport: Kite&apos;s dev Passport only pays hosts in its curated catalog and refused ours (
+            <code>host_not_in_executable_catalog</code>). The Passport session flow is built and was approved, but couldn&apos;t execute.
+          </li>
+          <li>
+            <b>Capped on purpose:</b> live settlement has a daily test-USDC budget and per-visitor limits. Past them, a line shows a clearly labelled{" "}
+            <b>RECORDED</b> settlement of the same item from an earlier run, never passed off as yours.
           </li>
           <li>
             <b>Seeded:</b> the shops, items and going rates. They&apos;re our own demo sellers, not real merchants, and nothing ships.
@@ -580,6 +701,107 @@ function HowItWorks({ rails, payTo, liveReceipts }: { rails: RailLite[]; payTo: 
             </li>
           )}
         </ul>
+      </div>
+    </section>
+  );
+}
+
+function ReceiptProof({ receipt, rail }: { receipt: ReceiptState; rail: string }) {
+  if (receipt === "pending") {
+    return (
+      <div className="r-receipt r-receipt--pending" aria-live="polite">
+        <span className="r-spin" aria-hidden /> settling on {rail}…
+      </div>
+    );
+  }
+  if (receipt.mode === "live") {
+    return (
+      <div className="r-receipt r-receipt--live">
+        <span className="r-badge">LIVE</span>
+        <span className="r-amounts">
+          {money(receipt.displayUsd)} → {receipt.onchain} test {receipt.symbol}
+        </span>
+        <a href={receipt.url} target="_blank" rel="noreferrer">
+          {receipt.network} tx {short(receipt.ref ?? "")} ↗
+        </a>
+      </div>
+    );
+  }
+  if (receipt.mode === "recorded") {
+    return (
+      <div className="r-receipt r-receipt--recorded">
+        <span className="r-badge r-badge--rec">RECORDED</span>
+        <span className="r-amounts">
+          {money(receipt.displayUsd)} → {receipt.onchain} test {receipt.symbol} · {fmtWhen(receipt.at)}
+        </span>
+        <a href={receipt.url} target="_blank" rel="noreferrer">
+          {receipt.network} tx {short(receipt.ref ?? "")} ↗
+        </a>
+        {receipt.note && <span className="r-why">{receipt.note} This is a recorded settlement of the same item, not this run.</span>}
+      </div>
+    );
+  }
+  return (
+    <div className="r-receipt r-receipt--none">
+      <span className="r-badge r-badge--none">NOT SETTLED</span>
+      <span className="r-why">{receipt.note}</span>
+    </div>
+  );
+}
+
+function SampleReceipt() {
+  const rows: { t: string; a: string; v: "paid" | "refused" | "hold"; m: string }[] = [
+    { t: "Golden pothos, ceramic pot", a: "$16.00", v: "paid", m: "fair · $17 going rate" },
+    { t: "Same journal, other shop", a: "$34.00", v: "refused", m: "2.8× the going rate" },
+    { t: "Same-day courier", a: "$9.50", v: "hold", m: "$6.50 over · asks you" },
+  ];
+  return (
+    <div className="sample-paper" aria-hidden>
+      <div className="sample-head">
+        <TabGlyph small /> <strong>ON MY TAB</strong>
+        <span>SAMPLE</span>
+      </div>
+      {rows.map((r) => (
+        <div key={r.t} className={`sample-row sample-row--${r.v}`}>
+          <div>
+            <span className="sample-t">{r.t}</span>
+            <span className="sample-m">{r.m}</span>
+          </div>
+          <span className="sample-a">{r.a}</span>
+          <span className={`sample-stamp sample-stamp--${r.v}`}>{r.v === "paid" ? "PAID" : r.v === "refused" ? "REFUSED" : "HOLD"}</span>
+        </div>
+      ))}
+      <div className="sample-foot">
+        <span>Arc testnet tx 0x68…4c00 ↗</span>
+        <span>TAB $40.00</span>
+      </div>
+    </div>
+  );
+}
+
+function Revenue() {
+  return (
+    <section className="how money">
+      <h2>
+        How it <em>makes money</em>
+      </h2>
+      <p className="money-lede">The business model, not traction: today there&apos;s no revenue, no real merchants, and every payment is on a testnet.</p>
+      <div className="how-grid">
+        <article>
+          <span className="how-n">01 · per transaction</span>
+          <h3>A small fee on settled lines</h3>
+          <p>A thin fee (think 1%) on every line the agent actually pays. Nothing on refused, skipped or held items, so the incentive is to protect your tab, not to spend it.</p>
+        </article>
+        <article>
+          <span className="how-n">02 · sellers</span>
+          <h3>Sellers get paid per request</h3>
+          <p>With x402, any shop or API can charge an agent per call with no checkout, card form or account. We&apos;d charge sellers for agent-ready listings and routing to buyers who arrive with a sealed budget.</p>
+        </article>
+        <article>
+          <span className="how-n">03 · subscriptions</span>
+          <h3>Premium and household tabs</h3>
+          <p>Shared family tabs, several caps at once, merchant allowlists and approve-from-your-phone, for a few dollars a month.</p>
+        </article>
       </div>
     </section>
   );
@@ -600,16 +822,6 @@ function TabGlyph({ small }: { small?: boolean }) {
       <circle cx="32" cy="28" r="9.5" fill="var(--tab)" />
       <path d="M27.5 28.2l3.2 3.2 5.6-6.4" stroke="var(--paper)" strokeWidth="2.8" fill="none" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
-  );
-}
-
-function ReceiptGhost() {
-  return (
-    <div className="ghost" aria-hidden>
-      {[72, 54, 64, 40, 58].map((w, i) => (
-        <i key={i} style={{ width: `${w}%`, animationDelay: `${i * 0.12}s` }} />
-      ))}
-    </div>
   );
 }
 
